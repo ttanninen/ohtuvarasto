@@ -1,2 +1,0 @@
-Tähän testitekstiä
-testi testi hakemisto2/h2_t1.txt
