@@ -1,1 +1,3 @@
 # ohtuvarasto
+
+![GHA workflow badge](https://github.com/ttanninen/ohtuvarasto/actions/workflows/main.yml/badge.svg)
