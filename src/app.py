@@ -1,8 +1,9 @@
 import math
 import os
-import sqlite3
 
 from flask import Flask, flash, redirect, render_template, request, url_for
+
+import database
 
 
 def create_app(database_path=None):  # pylint: disable=too-many-statements
@@ -13,47 +14,11 @@ def create_app(database_path=None):  # pylint: disable=too-many-statements
         os.path.join(app.instance_path, "warehouse.sqlite3"),
     )
 
-    os.makedirs(
-        os.path.dirname(os.path.abspath(app.config["DATABASE"])), exist_ok=True
-    )
-
-    with sqlite3.connect(app.config["DATABASE"]) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS warehouses (
-                id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL,
-                capacity REAL NOT NULL CHECK (capacity > 0)
-            );
-            CREATE TABLE IF NOT EXISTS items (
-                id INTEGER PRIMARY KEY,
-                warehouse_id INTEGER NOT NULL
-                    REFERENCES warehouses(id) ON DELETE CASCADE,
-                name TEXT NOT NULL,
-                quantity REAL NOT NULL CHECK (quantity >= 0),
-                UNIQUE (warehouse_id, name)
-            );
-            """
-        )
-
-    def connect_db():
-        connection = sqlite3.connect(app.config["DATABASE"])
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+    database.initialize_database(app.config["DATABASE"])
 
     @app.get("/")
     def index():
-        with connect_db() as connection:
-            warehouses = connection.execute(
-                """
-                SELECT warehouses.id, warehouses.name, warehouses.capacity,
-                       COALESCE(SUM(items.quantity), 0) AS used
-                FROM warehouses LEFT JOIN items
-                    ON items.warehouse_id = warehouses.id
-                GROUP BY warehouses.id ORDER BY warehouses.id
-                """
-            ).fetchall()
+        warehouses = database.list_warehouses(app.config["DATABASE"])
         return render_template("index.html", warehouses=warehouses)
 
     @app.post("/warehouses")
@@ -63,11 +28,7 @@ def create_app(database_path=None):  # pylint: disable=too-many-statements
         if not name or capacity is None:
             flash("Enter a warehouse name and a positive capacity.")
             return redirect(url_for("index"))
-        with connect_db() as connection:
-            connection.execute(
-                "INSERT INTO warehouses (name, capacity) VALUES (?, ?)",
-                (name, capacity),
-            )
+        database.create_warehouse(app.config["DATABASE"], name, capacity)
         flash("Warehouse created.")
         return redirect(url_for("index"))
 
@@ -81,28 +42,15 @@ def create_app(database_path=None):  # pylint: disable=too-many-statements
                 url_for("warehouse_detail", warehouse_id=warehouse_id)
             )
 
-        with connect_db() as connection:
-            warehouse = connection.execute(
-                """
-                SELECT capacity, COALESCE(
-                    (SELECT SUM(quantity) FROM items WHERE warehouse_id = ?), 0
-                ) AS used
-                FROM warehouses WHERE id = ?
-                """,
-                (warehouse_id, warehouse_id),
-            ).fetchone()
-            if warehouse is None:
-                return "Warehouse not found", 404
-            if capacity < warehouse["used"]:
-                flash(
-                    "Capacity cannot be less than the quantity already stored."
-                )
-                return redirect(
-                    url_for("warehouse_detail", warehouse_id=warehouse_id)
-                )
-            connection.execute(
-                "UPDATE warehouses SET name = ?, capacity = ? WHERE id = ?",
-                (name, capacity, warehouse_id),
+        result = database.update_warehouse(
+            app.config["DATABASE"], warehouse_id, name, capacity
+        )
+        if result == "not_found":
+            return "Warehouse not found", 404
+        if result == "capacity":
+            flash("Capacity cannot be less than the quantity already stored.")
+            return redirect(
+                url_for("warehouse_detail", warehouse_id=warehouse_id)
             )
         flash("Warehouse updated.")
         return redirect(
@@ -111,28 +59,17 @@ def create_app(database_path=None):  # pylint: disable=too-many-statements
 
     @app.post("/warehouses/<int:warehouse_id>/delete")
     def delete_warehouse(warehouse_id):
-        with connect_db() as connection:
-            cursor = connection.execute(
-                "DELETE FROM warehouses WHERE id = ?", (warehouse_id,)
-            )
-            if cursor.rowcount == 0:
-                return "Warehouse not found", 404
+        if not database.delete_warehouse(app.config["DATABASE"], warehouse_id):
+            return "Warehouse not found", 404
         flash("Warehouse deleted.")
         return redirect(url_for("index"))
 
     @app.get("/warehouses/<int:warehouse_id>")
     def warehouse_detail(warehouse_id):
-        with connect_db() as connection:
-            warehouse = connection.execute(
-                "SELECT * FROM warehouses WHERE id = ?", (warehouse_id,)
-            ).fetchone()
-            if warehouse is None:
-                return "Warehouse not found", 404
-            items = connection.execute(
-                "SELECT * FROM items WHERE warehouse_id = ? ORDER BY name",
-                (warehouse_id,),
-            ).fetchall()
-            used = sum(item["quantity"] for item in items)
+        details = database.get_warehouse(app.config["DATABASE"], warehouse_id)
+        if details is None:
+            return "Warehouse not found", 404
+        warehouse, items, used = details
         return render_template(
             "warehouse.html", warehouse=warehouse, items=items, used=used
         )
@@ -147,33 +84,15 @@ def create_app(database_path=None):  # pylint: disable=too-many-statements
                 url_for("warehouse_detail", warehouse_id=warehouse_id)
             )
 
-        with connect_db() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            warehouse = connection.execute(
-                "SELECT capacity FROM warehouses WHERE id = ?", (warehouse_id,)
-            ).fetchone()
-            if warehouse is None:
-                return "Warehouse not found", 404
-            used = connection.execute(
-                "SELECT COALESCE(SUM(quantity), 0) FROM items "
-                "WHERE warehouse_id = ?",
-                (warehouse_id,),
-            ).fetchone()[0]
-            if quantity > warehouse["capacity"] - used:
-                flash(
-                    "That quantity exceeds the warehouse's available capacity."
-                )
-                return redirect(
-                    url_for("warehouse_detail", warehouse_id=warehouse_id)
-                )
-            connection.execute(
-                """
-                INSERT INTO items (warehouse_id, name, quantity)
-                VALUES (?, ?, ?)
-                ON CONFLICT (warehouse_id, name)
-                DO UPDATE SET quantity = quantity + excluded.quantity
-                """,
-                (warehouse_id, name, quantity),
+        result = database.add_item(
+            app.config["DATABASE"], warehouse_id, name, quantity
+        )
+        if result == "not_found":
+            return "Warehouse not found", 404
+        if result == "capacity":
+            flash("That quantity exceeds the warehouse's available capacity.")
+            return redirect(
+                url_for("warehouse_detail", warehouse_id=warehouse_id)
             )
         flash("Item added.")
         return redirect(url_for("warehouse_detail", warehouse_id=warehouse_id))
@@ -187,25 +106,16 @@ def create_app(database_path=None):  # pylint: disable=too-many-statements
             return redirect(
                 url_for("warehouse_detail", warehouse_id=warehouse_id)
             )
-        with connect_db() as connection:
-            item = connection.execute(
-                "SELECT quantity FROM items WHERE id = ? AND warehouse_id = ?",
-                (item_id, warehouse_id),
-            ).fetchone()
-            if item is None:
-                return "Item not found", 404
-            if quantity > item["quantity"]:
-                flash("There is not enough of that item in the warehouse.")
-                return redirect(
-                    url_for("warehouse_detail", warehouse_id=warehouse_id)
-                )
-            if quantity == item["quantity"]:
-                connection.execute("DELETE FROM items WHERE id = ?", (item_id,))
-            else:
-                connection.execute(
-                    "UPDATE items SET quantity = quantity - ? WHERE id = ?",
-                    (quantity, item_id),
-                )
+        result = database.remove_item(
+            app.config["DATABASE"], warehouse_id, item_id, quantity
+        )
+        if result == "not_found":
+            return "Item not found", 404
+        if result == "insufficient":
+            flash("There is not enough of that item in the warehouse.")
+            return redirect(
+                url_for("warehouse_detail", warehouse_id=warehouse_id)
+            )
         flash("Item removed.")
         return redirect(url_for("warehouse_detail", warehouse_id=warehouse_id))
 
