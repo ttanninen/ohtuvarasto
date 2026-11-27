@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>{{ warehouse.name }}</title>
+  </head>
+  <body>
+    <p><a href="{{ url_for('index') }}">All warehouses</a></p>
+    <h1>{{ warehouse.name }}</h1>
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <ul>{% for message in messages %}<li>{{ message }}</li>{% endfor %}</ul>
+      {% endif %}
+    {% endwith %}
+    <p>Capacity: {{ used }} / {{ warehouse.capacity }}</p>
+    <h2>Manage warehouse</h2>
+    <form method="post" action="{{ url_for('update_warehouse', warehouse_id=warehouse.id) }}">
+      <label>Name <input name="name" value="{{ warehouse.name }}" required></label>
+      <label>Capacity <input name="capacity" type="number" min="0.000001" step="any" value="{{ warehouse.capacity }}" required></label>
+      <button type="submit">Update warehouse</button>
+    </form>
+    <form method="post" action="{{ url_for('delete_warehouse', warehouse_id=warehouse.id) }}">
+      <button type="submit">Delete warehouse</button>
+    </form>
+    <h2>Contents</h2>
+    <ul>
+      {% for item in items %}
+        <li>
+          {{ item.name }}: {{ item.quantity }}
+          <form method="post" action="{{ url_for('remove_item', warehouse_id=warehouse.id, item_id=item.id) }}">
+            <label>Quantity to remove
+              <input name="quantity" type="number" min="0.000001" step="any" required>
+            </label>
+            <button type="submit">Remove</button>
+          </form>
+        </li>
+      {% else %}
+        <li>This warehouse is empty.</li>
+      {% endfor %}
+    </ul>
+    <h2>Add an item</h2>
+    <form method="post" action="{{ url_for('add_item', warehouse_id=warehouse.id) }}">
+      <label>Name <input name="name" required></label>
+      <label>Quantity <input name="quantity" type="number" min="0.000001" step="any" required></label>
+      <button type="submit">Add item</button>
+    </form>
+  </body>
+</html>

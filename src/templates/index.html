@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Warehouses</title>
+  </head>
+  <body>
+    <h1>Warehouses</h1>
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <ul>{% for message in messages %}<li>{{ message }}</li>{% endfor %}</ul>
+      {% endif %}
+    {% endwith %}
+    <form method="post" action="{{ url_for('create_warehouse') }}">
+      <label>Name <input name="name" required></label>
+      <label>Capacity <input name="capacity" type="number" min="0.000001" step="any" required></label>
+      <button type="submit">Create warehouse</button>
+    </form>
+    <ul>
+      {% for warehouse in warehouses %}
+        <li>
+          <a href="{{ url_for('warehouse_detail', warehouse_id=warehouse.id) }}">{{ warehouse.name }}</a>
+          — {{ warehouse.used }} / {{ warehouse.capacity }} used
+        </li>
+      {% else %}
+        <li>No warehouses yet.</li>
+      {% endfor %}
+    </ul>
+  </body>
+</html>
