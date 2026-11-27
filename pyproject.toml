@@ -5,6 +5,7 @@ description = ""
 requires-python = ">=3.14"
 dependencies = [
     "autopep8>=2.3.2",
+    "flask>=3.1.2",
     "pylint>=4.1.3",
 ]
 
